@@ -168,7 +168,7 @@ def tensor_train_cross(input_tensor, rank, tol=1e-4, n_iter_max=100, random_stat
         # list row_idx: list of (tensor_order-1) of lists of left indices
         row_idx = [[()]]
         for k in range(tensor_order - 1):
-            (next_row_idx, fibers_list) = left_right_ttcross_step(
+            next_row_idx, fibers_list = left_right_ttcross_step(
                 input_tensor, k, rank, row_idx, col_idx
             )
             # update row indices
@@ -185,7 +185,7 @@ def tensor_train_cross(input_tensor, rank, tol=1e-4, n_iter_max=100, random_stat
         col_idx = [None] * tensor_order
         col_idx[-1] = [()]
         for k in range(tensor_order, 1, -1):
-            (next_col_idx, fibers_list, Q_skeleton) = right_left_ttcross_step(
+            next_col_idx, fibers_list, Q_skeleton = right_left_ttcross_step(
                 input_tensor, k, rank, row_idx, col_idx
             )
             # update col indices
@@ -297,10 +297,10 @@ def left_right_ttcross_step(input_tensor, k, rank, row_idx, col_idx):
     core = tl.reshape(core, (rank[k] * tensor_shape[k], rank[k + 1]))
 
     # Compute QR decomposition
-    (Q, R) = tl.qr(core)
+    Q, R = tl.qr(core)
 
     # Maxvol
-    (I, _) = maxvol(Q)
+    I, _ = maxvol(Q)
 
     # Retrive indices in folded tensor
     new_idx = [
@@ -373,9 +373,9 @@ def right_left_ttcross_step(input_tensor, k, rank, row_idx, col_idx):
     core = tl.transpose(core)
 
     # Compute QR decomposition
-    (Q, R) = tl.qr(core)
+    Q, R = tl.qr(core)
     # Maxvol
-    (J, Q_inv) = maxvol(Q)
+    J, Q_inv = maxvol(Q)
     Q_inv = tl.tensor(Q_inv)
     Q_skeleton = tl.dot(Q, Q_inv)
 
@@ -421,7 +421,7 @@ def maxvol(A):
     Theoretical Computer Science. Volume 410, Issues 47–49, 6 November 2009, Pages 4801-4811
     """
 
-    (n, r) = tl.shape(A)
+    n, r = tl.shape(A)
 
     # The index of row of the submatrix
     row_idx = tl.zeros(r, dtype=tl.int64)
@@ -445,7 +445,8 @@ def maxvol(A):
         # If a row is 0, we delete it.
         if any(rows_norms == 0):
             zero_idx = tl.argmin(rows_norms, axis=0)
-            mask.pop(zero_idx)
+            mask.pop(tl.to_numpy(zero_idx))
+            mask = tl.tensor(mask, dtype=tl.int64)
             rest_of_rows = rest_of_rows[mask]
             A_new = A_new[mask, :]
             continue
@@ -464,11 +465,12 @@ def maxvol(A):
 
         # Delete the selected row
         mask.pop(tl.to_numpy(max_row_idx))
+        mask = tl.tensor(mask, dtype=tl.int64)
         A_new = A_new[mask, :]
 
         # update the row_idx and rest_of_rows
         row_idx = tl.index_update(row_idx, i, rest_of_rows[max_row_idx])
-        rest_of_rows = rest_of_rows[tl.tensor(mask, dtype=tl.int64)]
+        rest_of_rows = rest_of_rows[mask]
         i = i + 1
 
     row_idx = tl.tensor(row_idx, dtype=tl.int64)

@@ -90,7 +90,11 @@ def test_constrained_parafac_l1():
         random_state=rng,
         return_errors=True,
         tol_outer=1e-16,
-        n_iter_max=1000,
+        # tol_outer=1e-16 never triggers early stopping (especially on
+        # backends with lower numerical precision, e.g. jax/tensorflow), so
+        # this always runs the full n_iter_max. 50 already reaches well
+        # within tol_norm_2/tol_max_abs below; no need for 1000.
+        n_iter_max=50,
     )
     res = cp_to_tensor(res)
     error = T.norm(res - tensor, 2)
@@ -131,6 +135,51 @@ def test_constrained_parafac_l2():
         random_state=rng,
         return_errors=True,
         tol_outer=1 - 16,
+    )
+    res = cp_to_tensor(res)
+    error = T.norm(res - tensor, 2)
+    error /= T.norm(tensor, 2)
+    assert_(
+        error < tol_norm_2,
+        f"norm 2 of reconstruction higher = {error} than tolerance={tol_norm_2}",
+    )
+    # Test the max abs difference between the reconstruction and the tensor
+    assert_(
+        T.max(T.abs(res - tensor)) < tol_max_abs,
+        f"abs norm of reconstruction error = {T.max(T.abs(res - tensor))} higher than tolerance={tol_max_abs}",
+    )
+
+
+def test_constrained_parafac_group_lasso():
+    """Test for the CANDECOMP-PARAFAC decomposition with row-wise group lasso regularization"""
+    rng = T.check_random_state(1234)
+    tol_norm_2 = 0.5
+    tol_max_abs = 0.5
+    rank = 3
+    init = "random"
+    weights_init, factors_init = initialize_constrained_parafac(
+        T.zeros([6, 8, 4]), rank, group_lasso=[1e-3, 1e-3, 1e-3], init=init
+    )
+    tensor = cp_to_tensor((weights_init, factors_init))
+    for i in range(len(factors_init)):
+        factors_init[i] += T.tensor(
+            0.1 * rng.random_sample(T.shape(factors_init[i])),
+            **T.context(factors_init[i]),
+        )
+    tensor_init = CPTensor((weights_init, factors_init))
+    res, errors = constrained_parafac(
+        tensor,
+        group_lasso=[1e-3, 1e-3, 1e-3],
+        rank=rank,
+        init=tensor_init,
+        random_state=rng,
+        return_errors=True,
+        tol_outer=1e-16,
+        # tol_outer=1e-16 never triggers early stopping (especially on
+        # backends with lower numerical precision, e.g. jax/tensorflow), so
+        # this always runs the full n_iter_max. 50 already reaches well
+        # within tol_norm_2/tol_max_abs below; no need for 1000.
+        n_iter_max=50,
     )
     res = cp_to_tensor(res)
     error = T.norm(res - tensor, 2)
@@ -218,8 +267,17 @@ def test_constrained_parafac_simplex():
             **T.context(factors_init[i]),
         )
     tensor_init = CPTensor((weights_init, factors_init))
+    # The default tol_outer may not be met on backends with lower numerical
+    # precision (e.g. jax/tensorflow), letting this run to the default
+    # n_iter_max=100; the decimal=0 assertion below is reached well before
+    # that, so cap it explicitly to bound worst-case cost.
     _, factors = constrained_parafac(
-        tensor, simplex=[3, 3, 3], rank=rank, init=tensor_init, random_state=rng
+        tensor,
+        simplex=[3, 3, 3],
+        rank=rank,
+        init=tensor_init,
+        random_state=rng,
+        n_iter_max=25,
     )
     for factor in factors:
         assert_array_almost_equal(np.sum(T.to_numpy(factor), axis=0)[0], 3, decimal=0)
